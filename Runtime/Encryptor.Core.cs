@@ -7,8 +7,9 @@ namespace Achieve.DataProtector
 {
     public sealed partial class Encryptor
     {
-        private static byte[] EncryptInternal(byte[] compressedData, string key)
+        private static byte[] EncryptInternal(byte[] data, string key)
         {
+            byte[] compressedData = GzipCompressor.Compress(data);
             byte[] keyBytes = Encoding.UTF8.GetBytes(key);
 
             using (Aes aesAlg = Aes.Create())
