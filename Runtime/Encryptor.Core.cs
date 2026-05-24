@@ -1,5 +1,4 @@
 using System;
-using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -7,115 +6,63 @@ namespace Achieve.DataProtector
 {
     public sealed partial class Encryptor
     {
-        private static byte[] EncryptInternal(byte[] data, string key)
+        private const int NonceSizeBytes = 12;
+        private const int TagSizeBytes = 16;
+
+        private static byte[] DeriveKey(string key)
         {
-            byte[] compressedData = GzipCompressor.Compress(data);
-            byte[] keyBytes = Encoding.UTF8.GetBytes(key);
-
-            using (Aes aesAlg = Aes.Create())
-            {
-                aesAlg.Key = keyBytes;
-                aesAlg.GenerateIV();
-
-                using (MemoryStream msEncrypt = new MemoryStream())
-                {
-                    msEncrypt.Write(aesAlg.IV, 0, aesAlg.IV.Length);
-
-                    ICryptoTransform encryptor = aesAlg.CreateEncryptor(aesAlg.Key, aesAlg.IV);
-                    using (CryptoStream csEncrypt = new CryptoStream(msEncrypt, encryptor, CryptoStreamMode.Write))
-                    {
-                        csEncrypt.Write(compressedData, 0, compressedData.Length);
-                        csEncrypt.FlushFinalBlock();
-                    }
-
-                    return msEncrypt.ToArray();
-                }
-            }
+            using (var sha256 = SHA256.Create())
+                return sha256.ComputeHash(Encoding.UTF8.GetBytes(key));
         }
 
         private static byte[] EncryptInternal(string text, string key)
+            => EncryptInternal(Encoding.UTF8.GetBytes(text), key);
+
+        private static byte[] EncryptInternal(byte[] data, string key)
         {
-            byte[] compressedData = GzipCompressor.Compress(Encoding.UTF8.GetBytes(text));
-            byte[] keyBytes = Encoding.UTF8.GetBytes(key);
+            byte[] compressed = GzipCompressor.Compress(data);
+            byte[] keyBytes = DeriveKey(key);
 
-            using (Aes aesAlg = Aes.Create())
-            {
-                aesAlg.Key = keyBytes;
-                aesAlg.GenerateIV();
+            byte[] nonce = new byte[NonceSizeBytes];
+            RandomNumberGenerator.Fill(nonce);
 
-                using (MemoryStream msEncrypt = new MemoryStream())
-                {
-                    msEncrypt.Write(aesAlg.IV, 0, aesAlg.IV.Length);
+            byte[] tag = new byte[TagSizeBytes];
+            byte[] ciphertext = new byte[compressed.Length];
 
-                    ICryptoTransform encryptor = aesAlg.CreateEncryptor(aesAlg.Key, aesAlg.IV);
-                    using (CryptoStream csEncrypt = new CryptoStream(msEncrypt, encryptor, CryptoStreamMode.Write))
-                    {
-                        csEncrypt.Write(compressedData, 0, compressedData.Length);
-                        csEncrypt.FlushFinalBlock();
-                    }
+            using (var aesGcm = new AesGcm(keyBytes))
+                aesGcm.Encrypt(nonce, compressed, ciphertext, tag);
 
-                    return msEncrypt.ToArray();
-                }
-            }
-        }
-
-        private static byte[] DecryptInternal(byte[] cipherBytes, string key)
-        {
-            byte[] keyBytes = Encoding.UTF8.GetBytes(key);
-
-            using (MemoryStream msDecrypt = new MemoryStream(cipherBytes))
-            {
-                byte[] iv = new byte[16]; // 동일한 IV 사용
-                msDecrypt.Read(iv, 0, iv.Length);
-
-                using (Aes aesAlg = Aes.Create())
-                {
-                    aesAlg.Key = keyBytes;
-                    aesAlg.IV = iv;
-
-                    ICryptoTransform decryptor = aesAlg.CreateDecryptor(aesAlg.Key, aesAlg.IV);
-
-                    using (CryptoStream csDecrypt = new CryptoStream(msDecrypt, decryptor, CryptoStreamMode.Read))
-                    {
-                        using (MemoryStream resultStream = new MemoryStream())
-                        {
-                            csDecrypt.CopyTo(resultStream);
-                            byte[] decompressedData = GzipCompressor.Decompress(resultStream.ToArray());
-                            return decompressedData;
-                        }
-                    }
-                }
-            }
+            byte[] result = new byte[NonceSizeBytes + TagSizeBytes + ciphertext.Length];
+            Buffer.BlockCopy(nonce, 0, result, 0, NonceSizeBytes);
+            Buffer.BlockCopy(tag, 0, result, NonceSizeBytes, TagSizeBytes);
+            Buffer.BlockCopy(ciphertext, 0, result, NonceSizeBytes + TagSizeBytes, ciphertext.Length);
+            return result;
         }
 
         private static byte[] DecryptInternal(string cipherText, string key)
+            => DecryptInternal(Convert.FromBase64String(cipherText), key);
+
+        private static byte[] DecryptInternal(byte[] cipherBytes, string key)
         {
-            byte[] cipherBytes = Convert.FromBase64String(cipherText);
-            byte[] keyBytes = Encoding.UTF8.GetBytes(key);
+            if (cipherBytes.Length < NonceSizeBytes + TagSizeBytes)
+                throw new ArgumentException("Invalid ciphertext length.", nameof(cipherBytes));
 
-            using (MemoryStream msDecrypt = new MemoryStream(cipherBytes))
-            {
-                byte[] iv = new byte[16]; // 동일한 IV 사용
-                msDecrypt.Read(iv, 0, iv.Length);
+            byte[] keyBytes = DeriveKey(key);
 
-                using (Aes aesAlg = Aes.Create())
-                {
-                    aesAlg.Key = keyBytes;
-                    aesAlg.IV = iv;
+            byte[] nonce = new byte[NonceSizeBytes];
+            byte[] tag = new byte[TagSizeBytes];
+            byte[] encryptedData = new byte[cipherBytes.Length - NonceSizeBytes - TagSizeBytes];
 
-                    ICryptoTransform decryptor = aesAlg.CreateDecryptor(aesAlg.Key, aesAlg.IV);
+            Buffer.BlockCopy(cipherBytes, 0, nonce, 0, NonceSizeBytes);
+            Buffer.BlockCopy(cipherBytes, NonceSizeBytes, tag, 0, TagSizeBytes);
+            Buffer.BlockCopy(cipherBytes, NonceSizeBytes + TagSizeBytes, encryptedData, 0, encryptedData.Length);
 
-                    using (CryptoStream csDecrypt = new CryptoStream(msDecrypt, decryptor, CryptoStreamMode.Read))
-                    {
-                        using (MemoryStream resultStream = new MemoryStream())
-                        {
-                            csDecrypt.CopyTo(resultStream);
-                            byte[] decompressedData = GzipCompressor.Decompress(resultStream.ToArray());
-                            return decompressedData;
-                        }
-                    }
-                }
-            }
+            byte[] compressed = new byte[encryptedData.Length];
+
+            using (var aesGcm = new AesGcm(keyBytes))
+                aesGcm.Decrypt(nonce, encryptedData, tag, compressed);
+
+            return GzipCompressor.Decompress(compressed);
         }
     }
 }
