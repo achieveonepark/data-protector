@@ -1,0 +1,41 @@
+---
+title: はじめに
+description: Data Protector のインストールと基本的な使い方
+---
+
+## インストール
+
+以下のいずれかの方法を選択します。
+
+<Callout type="info">
+GitHub URL の `#` 以降のバージョンを確認してください。Changelog の最新の変更に対応するバージョンを指定できます。
+</Callout>
+
+### Unity Package Manager (UPM)
+
+1. UPM を開き、左上の `+` ボタンをクリックします。
+2. `Install package from git URL...` を選択します。
+3. `https://github.com/achieveonepark/DataProtector.git#1.0.0` を入力して Install を押します。
+
+### 手動追加
+
+Unity プロジェクトの `Packages/manifest.json` を開き、`dependencies` に次の行を追加します。
+
+```json
+"com.achieve.data-protector": "https://github.com/achieveonepark/DataProtector.git#1.0.0"
+```
+
+## 基本的な使い方
+
+16 バイトのキーでデータを暗号化・復号します。
+
+```csharp
+using Achieve.DataProtector;
+
+string key = "1234567890123456"; // 16 バイトのキー
+
+var encrypted = DataProtector.Encrypt(originalBytes, key);
+var decrypted = DataProtector.Decrypt(encrypted, key);
+```
+
+詳細なメソッドは [API](./api) を参照してください。
